@@ -11,4 +11,4 @@ Add commentary, subtitles and the final encode (also off-machine, or wherever th
 
 Rules: never re-encode raw clips before compose. Use exact=true only when a frame-accurate start matters.
 Secrets: GEMINI_API_KEY (required for AI selection); YT_COOKIES (optional, Netscape cookies.txt).
-Repo variable GEMINI_MODEL overrides the default model id (gemini-flash-latest).
+Repo variable GEMINI_MODEL overrides the default model id (gemini-3.8-flash).

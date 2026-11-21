@@ -211,7 +211,7 @@ def main():
         fetch(a.url, a.work)
         master = next(pathlib.Path(a.work).glob("master.mkv"))
         select(master, pathlib.Path(a.work) / "master.info.json", a.n, a.min, a.max, out / "clips.json",
-               os.environ.get("GEMINI_MODEL") or "gemini-flash-latest")
+               os.environ.get("GEMINI_MODEL") or "gemini-3.8-flash")
         cut(master, out / "clips.json", out / "clips", a.exact)
     else:
         compose(a.clip, a.out, a.voice, a.subs, a.vertical, a.crf, a.preset)
