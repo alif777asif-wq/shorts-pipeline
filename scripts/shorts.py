@@ -128,7 +128,53 @@ def rank(moments, heat, peaks, total, n, lo, hi, pad=1.0):
     return picked
 
 
-def select(master, info, n, lo, hi, out_json, model):
+def yt_watch_url(url):
+    m = re.search(r"(?:youtu\.be/|[?&]v=)([\w-]{11})", url)
+    return f"https://www.youtube.com/watch?v={m.group(1)}" if m else url
+
+
+def verify_youtube(url, clips, model, max_clip=60.0):
+    """Second opinion straight from YouTube: Gemini watches the source URL and can move the cuts."""
+    from google import genai
+    from google.genai import types
+    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    uri = yt_watch_url(url)
+    out = []
+    for c in clips:
+        dur = c["end"] - c["start"]
+        prompt = f"""Watch this YouTube video. A candidate Short runs from {c['start']:.1f}s to {c['end']:.1f}s ({dur:.1f}s).
+Judge it against the whole video: is this the single segment with the highest viral potential that works
+standalone, opens on a strong hook, and ends on a payoff without cutting mid-sentence or mid-action?
+If the boundaries are off, return corrected absolute start/end in seconds from the start of the video.
+The corrected clip must be at least 15 and at most {max_clip:.0f} seconds.
+Return only JSON: {{"ok": true, "start": 0.0, "end": 0.0, "score": 1, "hook": "...", "reason": "...", "verdict": "..."}}"""
+        try:
+            r = client.models.generate_content(
+                model=model,
+                contents=types.Content(parts=[
+                    types.Part(file_data=types.FileData(file_uri=uri)),
+                    types.Part(text=prompt)]),
+                config=types.GenerateContentConfig(response_mime_type="application/json"))
+            v = json.loads(r.text)
+        except Exception as e:  # keep the selected clip; record that verification was unavailable
+            print(f"verify unavailable ({c['start']:.1f}-{c['end']:.1f}): {e}", file=sys.stderr)
+            out.append({**c, "verified": False, "verdict": f"verification unavailable: {e}"})
+            continue
+        s, e = float(v.get("start", c["start"])), float(v.get("end", c["end"]))
+        s = max(0.0, s)
+        e = min(e, s + max_clip)
+        if e - s < 5:
+            s, e = c["start"], c["end"]
+        c = {**c, "start": round(s, 3), "end": round(e, 3), "verified": bool(v.get("ok", True)),
+             "verify_score": v.get("score"), "verify_reason": v.get("reason", ""),
+             "verdict": v.get("verdict", "")}
+        if v.get("hook"):
+            c["hook"] = v["hook"]
+        out.append(c)
+    return out
+
+
+def select(master, info, n, lo, hi, out_json, model, url=None, verify=False, max_clip=60.0):
     master = pathlib.Path(master)
     total = duration(master)
     heat, peaks = load_heat(info), audio_peaks(master)
@@ -142,6 +188,11 @@ def select(master, info, n, lo, hi, out_json, model):
         moments = [{"start": max(0, t - mid * 0.4), "end": max(0, t - mid * 0.4) + mid, "score": 5,
                     "reason": "audio peak"} for t, _ in peaks]
     clips = rank(moments, heat, peaks, total, n, lo, hi)
+    for c in clips:  # hard ceiling: pad and keyframe drift must never push a clip past max_clip
+        if c["end"] - c["start"] > max_clip:
+            c["end"] = round(c["start"] + max_clip, 3)
+    if verify and url and os.environ.get("GEMINI_API_KEY"):
+        clips = verify_youtube(url, clips, model, max_clip)
     json.dump(clips, open(out_json, "w"), indent=2)
     return clips
 
@@ -160,14 +211,14 @@ def nearest_keyframe(master, t, window=12):
     return k, k + min(0.5, (nxt - k) / 2)
 
 
-def cut(master, clips_json, out_dir, exact=False):
+def cut(master, clips_json, out_dir, exact=False, max_clip=60.0):
     out_dir = pathlib.Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     for i, c in enumerate(json.load(open(clips_json)), 1):
         out = out_dir / f"clip_{i:02d}.mkv"
         start, seek = (c["start"], c["start"]) if exact else nearest_keyframe(master, c["start"])
         cmd = ["ffmpeg", "-v", "error", "-y", "-ss", f"{seek:.3f}", "-i", str(master),
-               "-t", f"{c['end'] - seek:.3f}"]
+               "-t", f"{min(c['end'] - seek, max_clip):.3f}"]
         cmd += (["-c:v", "libx264", "-crf", "12", "-preset", "slower", "-c:a", "flac"] if exact
                 else ["-c", "copy", "-avoid_negative_ts", "make_zero"])
         run(cmd + [str(out)])
@@ -201,6 +252,8 @@ def main():
     p.add_argument("--out", default="out"); p.add_argument("--n", type=int, default=5)
     p.add_argument("--min", type=int, default=20); p.add_argument("--max", type=int, default=55)
     p.add_argument("--exact", action="store_true")
+    p.add_argument("--verify", action="store_true")
+    p.add_argument("--max-clip", type=float, default=60.0)
     p = sub.add_parser("compose"); p.add_argument("clip"); p.add_argument("out")
     p.add_argument("--voice"); p.add_argument("--subs"); p.add_argument("--vertical", action="store_true")
     p.add_argument("--crf", type=int, default=14); p.add_argument("--preset", default="slower")
@@ -211,8 +264,9 @@ def main():
         fetch(a.url, a.work)
         master = next(pathlib.Path(a.work).glob("master.mkv"))
         select(master, pathlib.Path(a.work) / "master.info.json", a.n, a.min, a.max, out / "clips.json",
-               os.environ.get("GEMINI_MODEL") or "gemini-3.8-flash")
-        cut(master, out / "clips.json", out / "clips", a.exact)
+               os.environ.get("GEMINI_MODEL") or "gemini-3.8-flash", url=a.url, verify=a.verify,
+               max_clip=a.max_clip)
+        cut(master, out / "clips.json", out / "clips", a.exact, a.max_clip)
     else:
         compose(a.clip, a.out, a.voice, a.subs, a.vertical, a.crf, a.preset)
 

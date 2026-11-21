@@ -5,6 +5,7 @@ on:
       url: {description: "Video URL (YouTube or direct link)", required: true}
       clips: {description: "Number of clips", default: "5"}
       exact: {description: "Frame-exact re-encode (true) or lossless copy (false)", default: "false"}
+      verify: {description: "Verify the pick with Gemini YouTube analysis", default: "true"}
 jobs:
   run:
     runs-on: ubuntu-latest
@@ -25,9 +26,11 @@ jobs:
           IN_URL: ${{ inputs.url }}
           IN_CLIPS: ${{ inputs.clips }}
           IN_EXACT: ${{ inputs.exact }}
+          IN_VERIFY: ${{ inputs.verify }}
         run: |
           args=(auto "$IN_URL" --n "$IN_CLIPS")
           if [ "$IN_EXACT" = "true" ]; then args+=(--exact); fi
+          if [ "$IN_VERIFY" = "true" ]; then args+=(--verify); fi
           python scripts/shorts.py "${args[@]}"
       - uses: actions/upload-artifact@v4
         with: {name: clips, path: out/, retention-days: 3}
