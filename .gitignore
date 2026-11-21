@@ -1,0 +1,7 @@
+out/
+work/
+cookies.txt
+*.wav
+*.ass
+final.mp4
+__pycache__/

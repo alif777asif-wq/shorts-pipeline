@@ -1,0 +1,33 @@
+name: shorts
+on:
+  workflow_dispatch:
+    inputs:
+      url: {description: "Video URL (YouTube or direct link)", required: true}
+      clips: {description: "Number of clips", default: "5"}
+      exact: {description: "Frame-exact re-encode (true) or lossless copy (false)", default: "false"}
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: pip install -r requirements.txt
+      - name: Optional YouTube cookies
+        env: {YT_COOKIES: "${{ secrets.YT_COOKIES }}"}
+        run: if [ -n "$YT_COOKIES" ]; then printf '%s' "$YT_COOKIES" > cookies.txt; echo "YT_COOKIES_FILE=$PWD/cookies.txt" >> "$GITHUB_ENV"; fi
+      - name: Run
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          IN_URL: ${{ inputs.url }}
+          IN_CLIPS: ${{ inputs.clips }}
+          IN_EXACT: ${{ inputs.exact }}
+        run: |
+          args=(auto "$IN_URL" --n "$IN_CLIPS")
+          if [ "$IN_EXACT" = "true" ]; then args+=(--exact); fi
+          python scripts/shorts.py "${args[@]}"
+      - uses: actions/upload-artifact@v4
+        with: {name: clips, path: out/, retention-days: 3}
