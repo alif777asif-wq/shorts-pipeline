@@ -228,7 +228,7 @@ def cut(master, clips_json, out_dir, exact=False, max_clip=60.0):
 def compose(clip, out, voice=None, subs=None, vertical=False, crf=14, preset="slower"):
     v = []
     if vertical:
-        v.append("crop=ih*9/16:ih,scale=1080:1920:flags=lanczos")
+        v.append("crop=ih*9/16:ih,scale=2160:3840:flags=lanczos")
     if subs:
         v.append("ass=" + str(subs).replace("\\", "/").replace(":", "\\:"))
     fc = ["[0:v]" + (",".join(v) if v else "null") + "[v]"]
@@ -257,6 +257,8 @@ def main():
     p = sub.add_parser("compose"); p.add_argument("clip"); p.add_argument("out")
     p.add_argument("--voice"); p.add_argument("--subs"); p.add_argument("--vertical", action="store_true")
     p.add_argument("--crf", type=int, default=14); p.add_argument("--preset", default="slower")
+    p = sub.add_parser("verify"); p.add_argument("clips_json"); p.add_argument("--url", required=True)
+    p.add_argument("--max-clip", type=float, default=60.0)
     a = ap.parse_args()
     if a.cmd == "auto":
         out = pathlib.Path(a.out)
@@ -267,6 +269,14 @@ def main():
                os.environ.get("GEMINI_MODEL") or "gemini-3.8-flash", url=a.url, verify=a.verify,
                max_clip=a.max_clip)
         cut(master, out / "clips.json", out / "clips", a.exact, a.max_clip)
+    elif a.cmd == "verify":
+        if not os.environ.get("GEMINI_API_KEY"):
+            sys.exit("GEMINI_API_KEY not set")
+        clips = json.load(open(a.clips_json))
+        model = os.environ.get("GEMINI_MODEL") or "gemini-3.8-flash"
+        out = verify_youtube(a.url, clips, model, a.max_clip)
+        json.dump(out, open(a.clips_json, "w"), indent=2)
+        print(json.dumps(out, indent=2))
     else:
         compose(a.clip, a.out, a.voice, a.subs, a.vertical, a.crf, a.preset)
 
