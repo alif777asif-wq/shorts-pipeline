@@ -5,3 +5,5 @@ cookies.txt
 *.ass
 final.mp4
 __pycache__/
+.venv/
+work2/
